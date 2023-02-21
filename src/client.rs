@@ -14,7 +14,7 @@ use smol::future::FutureExt;
 
 type Conn = SendRequest<Full<Bytes>>;
 
-/// An HTTP-based RpcTransport for nanorpc.
+/// An HTTP-based [RpcTransport] for nanorpc.
 pub struct HttpRpcTransport {
     exec: smol::Executor<'static>,
     remote: SocketAddr,
@@ -23,7 +23,9 @@ pub struct HttpRpcTransport {
 }
 
 impl HttpRpcTransport {
-    /// Create a new HttpRpcTransport that goes to the given height.
+    /// Create a new HttpRpcTransport that goes to the given socket address over unencrypted HTTP/1.1.
+    ///
+    /// Currently, custom paths, HTTPS, etc are not supported.
     pub fn new(remote: SocketAddr) -> Self {
         Self {
             exec: smol::Executor::new(),

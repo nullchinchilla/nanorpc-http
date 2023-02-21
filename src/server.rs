@@ -13,13 +13,13 @@ pub struct HttpRpcServer {
 }
 
 impl HttpRpcServer {
-    /// Creates a new HTTP server listening at the given address.
+    /// Creates a new HTTP server listening at the given address. Routing is currently not supported.
     pub async fn bind(addr: SocketAddr) -> std::io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
         Ok(Self { listener })
     }
 
-    /// Runs the server, blocking indefinitely until a fatal failure happens. This must be run for the server to make any progress!
+    /// Runs the server, processing requests with the given [RpcService], blocking indefinitely until a fatal failure happens. This must be run for the server to make any progress!
     pub async fn run(&self, service: impl RpcService) -> std::io::Result<()> {
         let exec = smol::Executor::new();
         exec.run(async {

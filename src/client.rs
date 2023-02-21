@@ -65,6 +65,7 @@ impl RpcTransport for HttpRpcTransport {
             let response = conn
                 .send_request(
                     Request::builder()
+                        .method("POST")
                         .body(Full::new(serde_json::to_vec(&req)?.into()))
                         .expect("could not build request"),
                 )

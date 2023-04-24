@@ -1,5 +1,6 @@
 use std::{
     net::SocketAddr,
+    sync::RwLock,
     time::{Duration, Instant},
 };
 
@@ -20,10 +21,12 @@ pub struct HttpRpcTransport {
     remote: SocketAddr,
     pool: ConcurrentQueue<(Conn, Instant)>,
     idle_timeout: Duration,
+
+    req_timeout: RwLock<Duration>,
 }
 
 impl HttpRpcTransport {
-    /// Create a new HttpRpcTransport that goes to the given socket address over unencrypted HTTP/1.1.
+    /// Create a new HttpRpcTransport that goes to the given socket address over unencrypted HTTP/1.1. A default timeout is applied.
     ///
     /// Currently, custom paths, HTTPS, etc are not supported.
     pub fn new(remote: SocketAddr) -> Self {
@@ -32,8 +35,25 @@ impl HttpRpcTransport {
             remote,
             pool: ConcurrentQueue::bounded(64),
             idle_timeout: Duration::from_secs(60),
+            req_timeout: Duration::from_secs(30).into(),
         }
     }
+
+    /// Sets the timeout for this transport. If `None`, disables any timeout handling.
+    pub fn set_timeout(&self, timeout: Option<Duration>) {
+        *self.req_timeout.write().unwrap() = timeout.unwrap_or(Duration::MAX);
+    }
+
+    /// Gets the timeout for this transport.
+    pub fn timeout(&self) -> Option<Duration> {
+        let to = *self.req_timeout.read().unwrap();
+        if to == Duration::MAX {
+            None
+        } else {
+            Some(to)
+        }
+    }
+
     /// Opens a new connection to the remote.
     async fn open_conn(&self) -> std::io::Result<Conn> {
         while let Ok((conn, expiry)) = self.pool.pop() {
@@ -60,6 +80,7 @@ impl RpcTransport for HttpRpcTransport {
     type Error = std::io::Error;
 
     async fn call_raw(&self, req: JrpcRequest) -> Result<JrpcResponse, Self::Error> {
+        let timeout = *self.req_timeout.read().unwrap();
         async {
             let mut conn = self.open_conn().await?;
             let response = conn
@@ -82,6 +103,13 @@ impl RpcTransport for HttpRpcTransport {
             let _ = self.pool.push((conn, Instant::now()));
             Ok(resp)
         }
+        .or(async {
+            smol::Timer::after(timeout).await;
+            Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "nanorpc-http request timed out",
+            ))
+        })
         .or(self.exec.run(smol::future::pending()))
         .await
     }

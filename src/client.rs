@@ -62,8 +62,7 @@ impl HttpRpcTransport {
             }
         }
         // okay there's nothing in the pool for us. create a new conn asap
-        let conn =
-            HyperStream::new_wrapped(smol::net::TcpStream::connect(self.remote).await.unwrap());
+        let conn = HyperStream::new_wrapped(smol::net::TcpStream::connect(self.remote).await?);
         let (conn, handle) = hyper::client::conn::http1::handshake(conn)
             .await
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;

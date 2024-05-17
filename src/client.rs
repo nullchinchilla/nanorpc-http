@@ -4,12 +4,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use async_tcpstream_hyper::HyperStream;
 use async_trait::async_trait;
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
 use http_body_util::{BodyExt, Full};
 use hyper::{client::conn::http1::SendRequest, Request};
-use hyper_util::rt::TokioIo;
 use nanorpc::{JrpcRequest, JrpcResponse, RpcTransport};
 use smol::future::FutureExt;
 
@@ -62,10 +62,12 @@ impl HttpRpcTransport {
             }
         }
         // okay there's nothing in the pool for us. create a new conn asap
-        let conn = TokioIo::new(tokio::net::TcpStream::connect(self.remote).await?);
+        let conn =
+            HyperStream::new_wrapped(smol::net::TcpStream::connect(self.remote).await.unwrap());
         let (conn, handle) = hyper::client::conn::http1::handshake(conn)
             .await
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
+
         self.exec
             .spawn(async move {
                 let _ = handle.await;

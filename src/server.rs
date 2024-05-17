@@ -1,11 +1,11 @@
 use std::{convert::Infallible, net::SocketAddr};
 
+use async_tcpstream_hyper::HyperStream;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{body::Incoming, service::service_fn, Request, Response};
-use hyper_util::rt::TokioIo;
 use nanorpc::{JrpcRequest, RpcService};
-use tokio::net::TcpListener;
+use smol::net::TcpListener;
 
 /// An HTTP-based nanorpc server.
 pub struct HttpRpcServer {
@@ -29,7 +29,7 @@ impl HttpRpcServer {
                     let connection = hyper::server::conn::http1::Builder::new()
                         .keep_alive(true)
                         .serve_connection(
-                            TokioIo::new(next),
+                            HyperStream::new_wrapped(next),
                             service_fn(|req: Request<Incoming>| async {
                                 let response = async {
                                     let body = req.into_body().collect().await?.to_bytes();

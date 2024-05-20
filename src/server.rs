@@ -1,6 +1,6 @@
 use std::{convert::Infallible, net::SocketAddr};
 
-use async_compat::CompatExt;
+use async_tcpstream_hyper::HyperStream;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{body::Incoming, service::service_fn, Request, Response};
@@ -29,7 +29,7 @@ impl HttpRpcServer {
                     let connection = hyper::server::conn::http1::Builder::new()
                         .keep_alive(true)
                         .serve_connection(
-                            next.compat(),
+                            HyperStream::new_wrapped(next),
                             service_fn(|req: Request<Incoming>| async {
                                 let response = async {
                                     let body = req.into_body().collect().await?.to_bytes();

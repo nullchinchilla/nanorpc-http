@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use async_compat::CompatExt;
+use async_tcpstream_hyper::HyperStream;
 use async_trait::async_trait;
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
@@ -62,10 +62,11 @@ impl HttpRpcTransport {
             }
         }
         // okay there's nothing in the pool for us. create a new conn asap
-        let conn = smol::net::TcpStream::connect(self.remote).await?;
-        let (conn, handle) = hyper::client::conn::http1::handshake(conn.compat())
+        let conn = HyperStream::new_wrapped(smol::net::TcpStream::connect(self.remote).await?);
+        let (conn, handle) = hyper::client::conn::http1::handshake(conn)
             .await
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
+
         self.exec
             .spawn(async move {
                 let _ = handle.await;
@@ -110,7 +111,7 @@ impl RpcTransport for HttpRpcTransport {
                 "nanorpc-http request timed out",
             ))
         })
-        .or(self.exec.run(smol::future::pending()))
+        .or(self.exec.run(std::future::pending()))
         .await
     }
 }

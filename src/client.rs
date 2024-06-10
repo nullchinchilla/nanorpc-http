@@ -1,5 +1,5 @@
 use std::{
-    net::SocketAddr,
+    net::{SocketAddr, ToSocketAddrs},
     sync::RwLock,
     time::{Duration, Instant},
 };
@@ -25,6 +25,11 @@ pub struct HttpRpcTransport {
     req_timeout: RwLock<Duration>,
 }
 
+pub enum Proxy {
+    Direct,
+    Socks5,
+}
+
 impl HttpRpcTransport {
     /// Create a new HttpRpcTransport that goes to the given socket address over unencrypted HTTP/1.1. A default timeout is applied.
     ///
@@ -37,6 +42,34 @@ impl HttpRpcTransport {
             idle_timeout: Duration::from_secs(60),
             req_timeout: Duration::from_secs(30).into(),
         }
+    }
+
+    /// Create a new HttpRpcTransport that goes to the given remote address.
+    ///
+    /// Currently, custom paths, HTTPS, etc are not supported.
+    pub fn new_with_proxy(remote: &str, proxy: Proxy) -> anyhow::Result<Self> {
+        let remote_addr = match proxy {
+            Proxy::Direct => {
+                let addr: SocketAddr = remote
+                    .parse::<SocketAddr>()
+                    .expect("invalid socket address");
+                addr
+            }
+            Proxy::Socks5 => {
+                let addresses: Vec<SocketAddr> = remote
+                    .to_socket_addrs()
+                    .expect("invalid socks5 proxy address")
+                    .collect();
+                *addresses.first().expect("resolved empty socket addresses")
+            }
+        };
+        Ok(Self {
+            exec: smol::Executor::new(),
+            remote: remote_addr,
+            pool: ConcurrentQueue::bounded(64),
+            idle_timeout: Duration::from_secs(60),
+            req_timeout: Duration::from_secs(30).into(),
+        })
     }
 
     /// Sets the timeout for this transport. If `None`, disables any timeout handling.

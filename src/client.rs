@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Context;
 use async_compat::CompatExt;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -11,7 +12,11 @@ use concurrent_queue::ConcurrentQueue;
 use http_body_util::{BodyExt, Full};
 use hyper::{client::conn::http1::SendRequest, Request};
 use nanorpc::{JrpcRequest, JrpcResponse, RpcTransport};
-use smol::future::FutureExt;
+use smol::{future::FutureExt, net::TcpStream};
+use std::io::Result as IoResult;
+
+use async_socks5::connect;
+use smol::io::BufReader;
 
 type Conn = SendRequest<Full<Bytes>>;
 
@@ -19,6 +24,7 @@ type Conn = SendRequest<Full<Bytes>>;
 pub struct HttpRpcTransport {
     exec: smol::Executor<'static>,
     remote: SocketAddr,
+    proxy: Proxy,
     pool: ConcurrentQueue<(Conn, Instant)>,
     idle_timeout: Duration,
 
@@ -26,7 +32,7 @@ pub struct HttpRpcTransport {
 }
 
 pub enum Proxy {
-    Direct,
+    Direct, // no proxy
     Socks5,
 }
 
@@ -34,42 +40,15 @@ impl HttpRpcTransport {
     /// Create a new HttpRpcTransport that goes to the given socket address over unencrypted HTTP/1.1. A default timeout is applied.
     ///
     /// Currently, custom paths, HTTPS, etc are not supported.
-    pub fn new(remote: SocketAddr) -> Self {
+    pub fn new(remote: SocketAddr, proxy: Proxy) -> Self {
         Self {
             exec: smol::Executor::new(),
             remote,
+            proxy,
             pool: ConcurrentQueue::bounded(64),
             idle_timeout: Duration::from_secs(60),
             req_timeout: Duration::from_secs(30).into(),
         }
-    }
-
-    /// Create a new HttpRpcTransport that goes to the given remote address.
-    ///
-    /// Currently, custom paths, HTTPS, etc are not supported.
-    pub fn new_with_proxy(remote: &str, proxy: Proxy) -> anyhow::Result<Self> {
-        let remote_addr = match proxy {
-            Proxy::Direct => {
-                let addr: SocketAddr = remote
-                    .parse::<SocketAddr>()
-                    .expect("invalid socket address");
-                addr
-            }
-            Proxy::Socks5 => {
-                let addresses: Vec<SocketAddr> = remote
-                    .to_socket_addrs()
-                    .expect("invalid socks5 proxy address")
-                    .collect();
-                *addresses.first().expect("resolved empty socket addresses")
-            }
-        };
-        Ok(Self {
-            exec: smol::Executor::new(),
-            remote: remote_addr,
-            pool: ConcurrentQueue::bounded(64),
-            idle_timeout: Duration::from_secs(60),
-            req_timeout: Duration::from_secs(30).into(),
-        })
     }
 
     /// Sets the timeout for this transport. If `None`, disables any timeout handling.
@@ -88,22 +67,42 @@ impl HttpRpcTransport {
     }
 
     /// Opens a new connection to the remote.
-    async fn open_conn(&self) -> std::io::Result<Conn> {
+    async fn open_conn(&self) -> IoResult<Conn> {
         while let Ok((conn, expiry)) = self.pool.pop() {
             if expiry.elapsed() < self.idle_timeout {
                 return Ok(conn);
             }
         }
-        // okay there's nothing in the pool for us. create a new conn asap
-        let conn = smol::net::TcpStream::connect(self.remote).await?;
+
+        // Create a new connection based on the proxy setting
+        let conn = match &self.proxy {
+            Proxy::Direct => {
+                // Direct connection to the remote server
+                TcpStream::connect(self.remote).await?
+            }
+            Proxy::Socks5 => {
+                let proxy_addr = self.remote;
+
+                let tcp_stream = TcpStream::connect(proxy_addr).await?;
+                let mut compat_stream = tcp_stream.compat();
+                async_socks5::connect(&mut compat_stream, self.remote, None)
+                    .await
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+                compat_stream.into_inner()
+            }
+        };
+
         let (conn, handle) = hyper::client::conn::http1::handshake(conn.compat())
             .await
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
+
         self.exec
             .spawn(async move {
                 let _ = handle.await;
             })
             .detach();
+
         Ok(conn)
     }
 }

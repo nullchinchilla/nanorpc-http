@@ -34,7 +34,7 @@ pub struct HttpRpcTransport {
 #[derive(Clone)]
 pub enum Proxy {
     Direct,
-    Socks5,
+    Socks5(SocketAddr),
 }
 
 impl HttpRpcTransport {
@@ -77,9 +77,7 @@ impl HttpRpcTransport {
 
         let conn = match &self.proxy {
             Proxy::Direct => TcpStream::connect(self.remote).await?,
-            Proxy::Socks5 => {
-                let proxy_addr = self.remote;
-
+            Proxy::Socks5(proxy_addr) => {
                 let tcp_stream = TcpStream::connect(proxy_addr).await?;
                 let mut compat_stream = tcp_stream.compat();
                 async_socks5::connect(&mut compat_stream, self.remote, None)

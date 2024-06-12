@@ -1,11 +1,11 @@
 use std::{
-    net::{SocketAddr, ToSocketAddrs},
+    net::SocketAddr,
     sync::RwLock,
     time::{Duration, Instant},
 };
 
-use anyhow::Context;
 use async_compat::CompatExt;
+use async_socks5::AddrKind;
 use async_trait::async_trait;
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
@@ -15,15 +15,12 @@ use nanorpc::{JrpcRequest, JrpcResponse, RpcTransport};
 use smol::{future::FutureExt, net::TcpStream};
 use std::io::Result as IoResult;
 
-use async_socks5::connect;
-use smol::io::BufReader;
-
 type Conn = SendRequest<Full<Bytes>>;
 
 /// An HTTP-based [RpcTransport] for nanorpc.
 pub struct HttpRpcTransport {
     exec: smol::Executor<'static>,
-    remote: SocketAddr,
+    remote: String,
     proxy: Proxy,
     pool: ConcurrentQueue<(Conn, Instant)>,
     idle_timeout: Duration,
@@ -41,7 +38,7 @@ impl HttpRpcTransport {
     /// Create a new HttpRpcTransport that goes to the given socket address over unencrypted HTTP/1.1. A default timeout is applied.
     ///
     /// Currently, custom paths, HTTPS, etc are not supported.
-    pub fn new(remote: SocketAddr, proxy: Proxy) -> Self {
+    pub fn new(remote: String, proxy: Proxy) -> Self {
         Self {
             exec: smol::Executor::new(),
             remote,
@@ -76,11 +73,23 @@ impl HttpRpcTransport {
         }
 
         let conn = match &self.proxy {
-            Proxy::Direct => TcpStream::connect(self.remote).await?,
+            Proxy::Direct => TcpStream::connect(self.remote.clone()).await?,
             Proxy::Socks5(proxy_addr) => {
                 let tcp_stream = TcpStream::connect(proxy_addr).await?;
                 let mut compat_stream = tcp_stream.compat();
-                async_socks5::connect(&mut compat_stream, self.remote, None)
+
+                // TODO: this doesn't handle normal domains with .haven, find a smarter way.
+                let processed_remote: AddrKind = if self.remote.contains(".haven") {
+                    let tuple = parse_haven_url(&self.remote).expect("invalid haven address");
+                    AddrKind::Domain(tuple.0, tuple.1)
+                } else {
+                    AddrKind::Ip(
+                        self.remote
+                            .parse::<SocketAddr>()
+                            .expect("invalid socket address"),
+                    )
+                };
+                async_socks5::connect(&mut compat_stream, processed_remote, None)
                     .await
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
@@ -99,6 +108,29 @@ impl HttpRpcTransport {
             .detach();
 
         Ok(conn)
+    }
+}
+
+// TODO: write a FromStr if it's cleaner
+pub fn parse_haven_url(url_str: &str) -> anyhow::Result<(String, u16)> {
+    // Remove the scheme (http:// or https://)
+    let url_without_scheme = url_str
+        .split("://")
+        .nth(1)
+        .ok_or_else(|| anyhow::anyhow!("Invalid URL format"))?;
+
+    // Split the remaining part into host and port
+    let parts: Vec<&str> = url_without_scheme.split(':').collect();
+    if parts.len() == 2 {
+        let host = parts[0].to_string();
+        let port: u16 = parts[1]
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Invalid port number"))?;
+        Ok((host, port))
+    } else if parts.len() == 1 {
+        Ok((parts[0].to_string(), 80)) // Default to port 80 if not specified
+    } else {
+        Err(anyhow::anyhow!("Invalid URL format"))
     }
 }
 

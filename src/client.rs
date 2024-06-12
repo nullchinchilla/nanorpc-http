@@ -31,8 +31,9 @@ pub struct HttpRpcTransport {
     req_timeout: RwLock<Duration>,
 }
 
+#[derive(Clone)]
 pub enum Proxy {
-    Direct, // no proxy
+    Direct,
     Socks5,
 }
 
@@ -74,12 +75,8 @@ impl HttpRpcTransport {
             }
         }
 
-        // Create a new connection based on the proxy setting
         let conn = match &self.proxy {
-            Proxy::Direct => {
-                // Direct connection to the remote server
-                TcpStream::connect(self.remote).await?
-            }
+            Proxy::Direct => TcpStream::connect(self.remote).await?,
             Proxy::Socks5 => {
                 let proxy_addr = self.remote;
 

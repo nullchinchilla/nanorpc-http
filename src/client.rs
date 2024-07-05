@@ -39,7 +39,14 @@ impl HttpRpcTransport {
     /// Create a new HttpRpcTransport that goes to the given socket address over unencrypted HTTP/1.1. A default timeout is applied.
     ///
     /// Currently, custom paths, HTTPS, etc are not supported.
-    pub fn new(remote: String, proxy: Proxy) -> Self {
+    pub fn new(remote: String) -> Self {
+        Self::new_with_proxy(remote, Proxy::Direct)
+    }
+
+    /// Create a new HttpRpcTransport that goes to the given socket address over unencrypted HTTP/1.1. A default timeout is applied.
+    ///
+    /// Currently, custom paths, HTTPS, etc are not supported.
+    pub fn new_with_proxy(remote: String, proxy: Proxy) -> Self {
         Self {
             exec: smol::Executor::new(),
             remote,

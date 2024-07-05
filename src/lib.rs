@@ -33,10 +33,8 @@ mod tests {
                 .unwrap();
             async { server.run(service).await.unwrap() }
                 .race(async {
-                    let client = AddClient::from(HttpRpcTransport::new(
-                        "127.0.0.1:12345".parse().unwrap(),
-                        Proxy::Direct,
-                    ));
+                    let client =
+                        AddClient::from(HttpRpcTransport::new("127.0.0.1:12345".parse().unwrap()));
                     assert_eq!(client.add(1.0, 2.0).await.unwrap(), 3.0);
                 })
                 .await

@@ -1,5 +1,6 @@
 use std::{
     net::SocketAddr,
+    str::FromStr,
     sync::RwLock,
     time::{Duration, Instant},
 };
@@ -79,16 +80,26 @@ impl HttpRpcTransport {
                 let mut compat_stream = tcp_stream.compat();
 
                 // TODO: this doesn't handle normal domains with .haven, find a smarter way.
-                let processed_remote: AddrKind = if self.remote.contains(".haven") {
-                    let tuple = parse_haven_url(&self.remote).expect("invalid haven address");
-                    AddrKind::Domain(tuple.0, tuple.1)
-                } else {
-                    AddrKind::Ip(
-                        self.remote
-                            .parse::<SocketAddr>()
-                            .expect("invalid socket address"),
-                    )
-                };
+                let processed_remote: AddrKind =
+                    if let Ok(sockaddr) = SocketAddr::from_str(&self.remote) {
+                        AddrKind::Ip(sockaddr)
+                    } else {
+                        let (domain, port) = self.remote.split_once(':').ok_or_else(|| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "destination not a valid domain:port",
+                            )
+                        })?;
+                        AddrKind::Domain(
+                            domain.to_string(),
+                            port.parse().ok().ok_or_else(|| {
+                                std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    "destination port not a valid number ",
+                                )
+                            })?,
+                        )
+                    };
                 async_socks5::connect(&mut compat_stream, processed_remote, None)
                     .await
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
@@ -108,29 +119,6 @@ impl HttpRpcTransport {
             .detach();
 
         Ok(conn)
-    }
-}
-
-// TODO: write a FromStr if it's cleaner
-pub fn parse_haven_url(url_str: &str) -> anyhow::Result<(String, u16)> {
-    // Remove the scheme (http:// or https://)
-    let url_without_scheme = url_str
-        .split("://")
-        .nth(1)
-        .ok_or_else(|| anyhow::anyhow!("Invalid URL format"))?;
-
-    // Split the remaining part into host and port
-    let parts: Vec<&str> = url_without_scheme.split(':').collect();
-    if parts.len() == 2 {
-        let host = parts[0].to_string();
-        let port: u16 = parts[1]
-            .parse()
-            .map_err(|_| anyhow::anyhow!("Invalid port number"))?;
-        Ok((host, port))
-    } else if parts.len() == 1 {
-        Ok((parts[0].to_string(), 80)) // Default to port 80 if not specified
-    } else {
-        Err(anyhow::anyhow!("Invalid URL format"))
     }
 }
 

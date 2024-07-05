@@ -1,6 +1,6 @@
 [package]
 name = "nanorpc-http"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 license="ISC"
 description="an extremely simple nanorpc backend built on top of HTTP"
